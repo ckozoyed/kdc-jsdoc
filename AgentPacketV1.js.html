@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: AgentPacketV1.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: AgentPacketV1.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>import { CRC32 } from "./CRC32.js";
+
+/**
+ * Implements version 1 of the KDC Agent packet wire format.
+ *
+ * Encodes and decodes the packet marker, protocol version, class name,
+ * option flags, serialized payload, sentinels, and optional CRC.
+ * Used internally by AgentSerializer; not part of the developer API.
+ *
+ * @private
+ */
+export class AgentPacketV1 {
+
+    static PACKET_MARKER = BigInt("0x4B44435F4B524953"); // "KDC_KRIS"
+    static PACKET_VERSION = 1;
+    static PACKET_SENTINEL = 0xCAFEBABE;
+    static FLAG_CRC_CHECK = BigInt("0x01");
+    static FLAG_COMPRESSED = BigInt("0x02");
+    static FLAG_ENCRYPTED = BigInt("0x04");
+
+    /**
+     * Creates an empty version 1 packet with all optional flags disabled.
+     */
+    constructor() {
+
+        this.version = AgentPacketV1.PACKET_VERSION;
+
+        this.className = null;
+        this.payload = null;
+
+        this.crcCheck = false;
+        this.compressed = false;
+        this.encrypted = false;
+
+        this.flags = 0n;
+        this.wireCrc = 0n;
+        this.computedCrc = 0n;
+
+    }
+
+    /**
+     * Sets whether the payload is compressed.
+     *
+     * @param {boolean} value Compression state.
+     *  * @returns {void}
+     */
+    setCompressed(value) {
+        this.compressed = Boolean(value);
+    }
+
+    /**
+     * Sets whether the payload is encrypted.
+     *
+     * @param {boolean} value Encryption state.
+     *  * @returns {void}
+     */
+    setEncrypted(value) {
+        this.encrypted = Boolean(value);
+    }
+
+    /**
+     * Sets whether CRC validation is enabled.
+     *
+     * @param {boolean} value CRC state.
+     *  * @returns {void}
+     */
+    setCrcCheck(value) {
+        this.crcCheck = Boolean(value);
+    }
+
+    /**
+     * Serialize an Agent into a Uint8Array.
+     */
+    /**
+     * Encodes the configured packet into the version 1 binary wire format.
+     *
+     * @returns {Uint8Array} Encoded packet bytes.
+     *  * @throws {Error} If the class name or payload is missing.
+     */
+    writePacketToWire() {
+
+        if (!this.className) {
+            throw new Error("Agent class name is null");
+        }
+
+        if (!this.payload) {
+            throw new Error("Payload is null");
+        }
+
+        this.flags = this.computeFlags();
+        this.crcCheck = (this.flags &amp; AgentPacketV1.FLAG_CRC_CHECK) !== 0n;
+
+        //
+        // Determine packet size
+        //
+
+        const classNameBytes = new TextEncoder().encode(this.className);
+        const crcSize = this.crcCheck ? 12 : 0;
+
+        const packetSize =
+                8 + // packet marker
+                4 + // version
+                4 + // sentinel
+
+                4 + // class name length
+                classNameBytes.length +
+                4 + // sentinel
+
+                8 + // flags
+                4 + // sentinel
+
+                4 + // payload length
+                this.payload.length +
+                4 + // sentinel
+
+                crcSize;
+
+        const buffer = new ArrayBuffer(packetSize);
+
+        const view = new DataView(buffer);
+
+        let offset = 0;
+
+        //
+        // Packet Marker
+        //
+
+        offset = this.writeMarker(view, offset);
+
+        //
+        // Version
+        //
+
+        offset = this.writeVersion(view, offset);
+
+        //
+        // Sentinel
+        //
+
+        offset = this.writeSentinel(view, offset);
+
+        //
+        // Class Name
+        //
+
+        offset = this.writeString(view, offset, this.className);
+
+        //
+        // Sentinel
+        //
+
+        offset = this.writeSentinel(view, offset);
+
+        //
+        // Flags
+        //
+
+        offset = this.writeFlags(view, offset, this.flags);
+
+        //
+        // Sentinel
+        //
+
+        offset = this.writeSentinel(view, offset);
+
+        //
+        // Payload
+        //
+
+        offset = this.writeBytes(view, offset, this.payload);
+
+        //
+        // Sentinel
+        //
+
+        offset = this.writeSentinel(view, offset);
+
+        //
+        // CRC
+        //
+
+        if (this.crcCheck) {
+
+            const crcBytes = new Uint8Array(buffer, 0, offset);
+            const crc = this.computeCrc(
+                    this.className,
+                    this.flags,
+                    this.payload
+                    );
+
+            view.setBigUint64(offset, crc, false);
+            offset += 8;
+
+            offset = this.writeSentinel(view, offset);
+
+        }
+
+        return new Uint8Array(buffer);
+
+    }
+
+    /**
+     * Deserialize a Uint8Array into an Agent.
+     */
+    /**
+     * Reads and validates a version 1 packet from wire bytes.
+     *
+     * @param {Uint8Array|ArrayBuffer} bytes Encoded packet bytes.
+     *  * @returns {AgentPacketV1} This packet populated with decoded values.
+     *  * @throws {Error} If the packet is malformed, unsupported, or fails CRC validation.
+     */
+    readPacketFromWire(bytes) {
+
+        if (!bytes) {
+            throw new Error("Packet is null");
+        }
+
+        const data =
+                bytes instanceof Uint8Array
+                ? bytes
+                : new Uint8Array(bytes);
+
+        const view = new DataView(
+                data.buffer,
+                data.byteOffset,
+                data.byteLength);
+
+        let offset = 0;
+
+        //
+        // Marker
+        //
+
+        offset = this.expectMarker(view, offset);
+
+        //
+        // Version
+        //
+
+        offset = this.expectVersion(view, offset);
+
+        //
+        // Sentinel
+        //
+        offset = this.expectSentinel(view, offset);
+
+        //
+        // Class Name
+        //
+
+        const classResult = this.readString(data, view, offset);
+
+        this.className = classResult.value
+
+        const className = classResult.value;
+
+        offset = classResult.offset;
+
+        //
+        // Sentinel
+        //
+        offset = this.expectSentinel(view, offset);
+
+        //
+        // Flags
+        //
+
+        const flagResult = this.readFlags(view, offset);
+
+        this.flags = flagResult.flags;
+
+        this.crcCheck = flagResult.crcCheck;
+        this.compressed = flagResult.compressed;
+        this.encrypted = flagResult.encrypted;
+
+        offset = flagResult.offset;
+
+        //
+        // Sentinel
+        //
+        offset = this.expectSentinel(view, offset);
+
+        //
+        // Payload
+        //
+
+        const payloadResult = this.readBytes(data, view, offset);
+
+        this.payload = payloadResult.bytes;
+
+        offset = payloadResult.offset;
+
+        //
+        // Sentinel
+        //
+        offset = this.expectSentinel(view, offset);
+
+        //
+        // CRC
+        //
+
+        let wireCrc = 0n;
+
+        if (flagResult.crcCheck) {
+
+            const crc = this.computeCrc(
+                    this.className,
+                    this.flags,
+                    this.payload
+                    );
+
+            wireCrc = view.getBigUint64(offset, false);
+            offset += 8;
+            offset = this.expectSentinel(view, offset);
+
+            if (wireCrc !== crc) {
+                throw new Error(
+                        `CRC validation failed. computed=${crc} wire=${wireCrc}`);
+            }
+
+        }
+
+        //
+        // Verify entire packet was consumed
+        //
+
+        if (offset !== data.byteLength) {
+            throw new Error(
+                    `Invalid packet length: ${data.byteLength - offset} trailing bytes`);
+        }
+
+        return this;
+
+    }
+
+    writeSentinel(view, offset) {
+        view.setInt32(offset, AgentPacketV1.PACKET_SENTINEL);
+        return offset + 4;
+    }
+
+    expectSentinel(view, offset) {
+
+        const actual = view.getUint32(offset, false);
+
+        if (actual !== AgentPacketV1.PACKET_SENTINEL) {
+            throw new Error(
+                    "Invalid packet sentinel. Expected 0xCAFEBABE"
+                    );
+        }
+
+        return offset + 4;
+    }
+
+    writeMarker(view, offset) {
+        view.setBigUint64(offset, AgentPacketV1.PACKET_MARKER);
+        return offset + 8;
+    }
+
+    expectMarker(view, offset) {
+
+        const marker = view.getBigUint64(offset);
+
+        if (marker !== AgentPacketV1.PACKET_MARKER) {
+            throw new Error("Invalid packet marker");
+        }
+
+        return offset + 8;
+    }
+
+    writeVersion(view, offset) {
+        view.setInt32(offset, AgentPacketV1.PACKET_VERSION);
+        return offset + 4;
+    }
+
+    expectVersion(view, offset) {
+
+        const version = view.getInt32(offset);
+
+        if (version !== AgentPacketV1.PACKET_VERSION) {
+            throw new Error(`Unsupported packet version ${version}`);
+        }
+
+        return offset + 4;
+    }
+
+    /**
+     * Builds the packet option bitmask from the configured booleans.
+     *
+     * @returns {bigint} Combined packet flags.
+     */
+    computeFlags() {
+
+        let flags = 0n;
+
+        if (this.crcCheck) {
+            flags |= AgentPacketV1.FLAG_CRC_CHECK;
+        }
+
+        if (this.compressed) {
+            flags |= AgentPacketV1.FLAG_COMPRESSED;
+        }
+
+        if (this.encrypted) {
+            flags |= AgentPacketV1.FLAG_ENCRYPTED;
+        }
+
+        return flags;
+    }
+
+    /**
+     * Writes the packet option bitmask.
+     *
+     * @param {DataView} view Packet buffer view.
+     *  * @param {number} offset Write offset.
+     *  * @param {bigint} flags Packet flags.
+     *  * @returns {number} Updated offset.
+     */
+    writeFlags(view, offset, flags) {
+        view.setBigUint64(offset, flags);
+        return offset + 8;
+    }
+
+    /**
+     * Reads and validates the packet option bitmask.
+     *
+     * @param {DataView} view Packet buffer view.
+     *  * @param {number} offset Read offset.
+     *  * @returns {{flags: bigint, crcCheck: boolean, compressed: boolean, encrypted: boolean, offset: number}} Decoded flags and updated offset.
+     *  * @throws {Error} If unknown flags are present.
+     */
+    readFlags(view, offset) {
+
+        const flags = view.getBigUint64(offset, false);
+        offset += 8;
+
+        const validFlags =
+                AgentPacketV1.FLAG_CRC_CHECK |
+                AgentPacketV1.FLAG_COMPRESSED |
+                AgentPacketV1.FLAG_ENCRYPTED;
+
+        if ((flags &amp; ~validFlags) !== BigInt(0)) {
+            throw new Error(
+                    `Invalid packet flags: 0x${flags.toString(16)}`);
+        }
+
+        return {
+            flags: flags,
+            crcCheck:
+                    (flags &amp; AgentPacketV1.FLAG_CRC_CHECK) !== BigInt(0),
+            compressed:
+                    (flags &amp; AgentPacketV1.FLAG_COMPRESSED) !== BigInt(0),
+            encrypted:
+                    (flags &amp; AgentPacketV1.FLAG_ENCRYPTED) !== BigInt(0),
+            offset: offset
+        };
+    }
+    /**
+     * Compute CRC over class name (UTF-8) + payload bytes.
+     * Mirrors Java CRC32 usage.
+     */
+    /**
+     * Calculates the CRC32 of version, class name, flags, and payload fields.
+     *
+     * @param {string} className Registered Java class name.
+     *  * @param {bigint} flags Packet flags.
+     *  * @param {Uint8Array} payload Serialized payload.
+     *  * @returns {bigint} CRC32 value.
+     */
+    computeCrc(className, flags, payload) {
+
+        const crc = new CRC32();
+
+        const classNameBytes = new TextEncoder().encode(className);
+
+        crc.update(this.shortToBytes(AgentPacketV1.PACKET_VERSION));
+
+        crc.update(this.intToBytes(classNameBytes.length));
+        crc.update(classNameBytes);
+
+        crc.update(this.longToBytes(flags));
+
+        crc.update(this.intToBytes(payload.length));
+        crc.update(payload);
+
+        return BigInt(crc.getValue());
+    }
+
+    /**
+     * Encodes a 16-bit integer in big-endian order.
+     *
+     * @param {number} value Integer value.
+     *  * @returns {Uint8Array} Encoded bytes.
+     */
+    shortToBytes(value) {
+
+        const buffer = new ArrayBuffer(2);
+
+        const view = new DataView(buffer);
+
+        view.setInt16(0, value, false);
+
+        return new Uint8Array(buffer);
+
+    }
+
+    /**
+     * Encodes a 32-bit integer in big-endian order.
+     *
+     * @param {number} value Integer value.
+     *  * @returns {Uint8Array} Encoded bytes.
+     */
+    intToBytes(value) {
+
+        const buffer = new ArrayBuffer(4);
+
+        const view = new DataView(buffer);
+
+        view.setInt32(0, value, false);
+
+        return new Uint8Array(buffer);
+
+    }
+
+    /**
+     * Encodes a 64-bit integer in big-endian order.
+     *
+     * @param {bigint} value Integer value.
+     *  * @returns {Uint8Array} Encoded bytes.
+     */
+    longToBytes(value) {
+
+        const buffer = new ArrayBuffer(8);
+
+        const view = new DataView(buffer);
+
+        view.setBigUint64(0, value, false); // false = big-endian
+
+        return new Uint8Array(buffer);
+
+    }
+
+    /**
+     * Encodes a string as UTF-8.
+     *
+     * @param {string} str Input string.
+     *  * @returns {Uint8Array} UTF-8 bytes.
+     */
+    utf8Bytes(str) {
+        return new TextEncoder().encode(str);
+    }
+
+    /**
+     * Concatenates UTF-8 class name bytes and payload bytes.
+     *
+     * @param {string} className Class name.
+     *  * @param {Uint8Array} payloadBytes Payload bytes.
+     *  * @returns {Uint8Array} Combined bytes.
+     */
+    buildCrcInput(className, payloadBytes) {
+
+        const nameBytes = this.utf8Bytes(className);
+
+        const combined = new Uint8Array(
+                nameBytes.length + payloadBytes.length
+                );
+
+        combined.set(nameBytes, 0);
+        combined.set(payloadBytes, nameBytes.length);
+
+        return combined;
+    }
+
+    /**
+     * Encodes a string as UTF-8.
+     *
+     * @param {string} str Input string.
+     *  * @returns {Uint8Array} UTF-8 bytes.
+     */
+    encodeUtf8(str) {
+        return new TextEncoder().encode(str);
+    }
+
+    /**
+     * Decodes UTF-8 bytes into a string.
+     *
+     * @param {Uint8Array} bytes UTF-8 bytes.
+     *  * @returns {string} Decoded string.
+     */
+    decodeUtf8(bytes) {
+        return new TextDecoder().decode(bytes);
+    }
+
+    /**
+     * Writes a length-prefixed UTF-8 string.
+     *
+     * @param {DataView} view Packet buffer view.
+     *  * @param {number} offset Write offset.
+     *  * @param {string} value String value.
+     *  * @returns {number} Updated offset.
+     */
+    writeString(view, offset, value) {
+
+        const bytes = this.encodeUtf8(value);
+
+        view.setInt32(offset, bytes.length);
+        offset += 4;
+
+        new Uint8Array(view.buffer, offset, bytes.length).set(bytes);
+
+        return offset + bytes.length;
+    }
+
+    /**
+     * Reads a length-prefixed UTF-8 string.
+     *
+     * @param {Uint8Array} data Packet bytes.
+     *  * @param {DataView} view Packet buffer view.
+     *  * @param {number} offset Read offset.
+     *  * @returns {{value: string, offset: number}} Decoded string and updated offset.
+     */
+    readString(data, view, offset) {
+
+        const length = view.getInt32(offset);
+        offset += 4;
+
+        const bytes = data.slice(offset, offset + length);
+
+        return {
+            value: this.decodeUtf8(bytes),
+            offset: offset + length
+        };
+    }
+
+    /**
+     * Writes length-prefixed payload bytes.
+     *
+     * @param {DataView} view Packet buffer view.
+     *  * @param {number} offset Write offset.
+     *  * @param {Uint8Array} bytes Payload bytes.
+     *  * @returns {number} Updated offset.
+     */
+    writeBytes(view, offset, bytes) {
+
+        view.setInt32(offset, bytes.length);
+        offset += 4;
+
+        new Uint8Array(view.buffer, offset, bytes.length).set(bytes);
+
+        return offset + bytes.length;
+    }
+
+    /**
+     * Reads length-prefixed payload bytes.
+     *
+     * @param {Uint8Array} data Packet bytes.
+     *  * @param {DataView} view Packet buffer view.
+     *  * @param {number} offset Read offset.
+     *  * @returns {{bytes: Uint8Array, offset: number}} Payload bytes and updated offset.
+     */
+    readBytes(data, view, offset) {
+
+        const length = view.getInt32(offset);
+        offset += 4;
+
+        return {
+            bytes: data.slice(offset, offset + length),
+            offset: offset + length
+        };
+    }
+}</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="Agent.html">Agent</a></li><li><a href="ClientParameters.html">ClientParameters</a></li><li><a href="ClientParametersBuilder.html">ClientParametersBuilder</a></li><li><a href="LatencyRecord.html">LatencyRecord</a></li><li><a href="Parameters.html">Parameters</a></li><li><a href="ParametersBuilder.html">ParametersBuilder</a></li><li><a href="Reply.html">Reply</a></li><li><a href="WebSocketClient.html">WebSocketClient</a></li><li><a href="WebSocketClientEventHandlerAdapter.html">WebSocketClientEventHandlerAdapter</a></li><li><a href="WebSocketClientParameters.html">WebSocketClientParameters</a></li><li><a href="WebSocketClientParametersBuilder.html">WebSocketClientParametersBuilder</a></li></ul><h3>Global</h3><ul><li><a href="global.html#LatencyContext">LatencyContext</a></li><li><a href="global.html#LatencyMetric">LatencyMetric</a></li><li><a href="global.html#RECEIVE_ASYNC">RECEIVE_ASYNC</a></li><li><a href="global.html#RECEIVE_SYNC">RECEIVE_SYNC</a></li><li><a href="global.html#SEND_ASYNC">SEND_ASYNC</a></li><li><a href="global.html#SEND_SYNC">SEND_SYNC</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.5</a> on Tue Oct 27 2026 22:50:22 GMT-0400 (Eastern Daylight Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

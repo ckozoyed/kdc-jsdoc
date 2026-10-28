@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Global</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Global</h1>
+
+    
+
+
+
+
+<section>
+
+<header>
+    
+        <h2></h2>
+        
+    
+</header>
+
+<article>
+    <div class="container-overview">
+    
+        
+
+        
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+        
+    
+    </div>
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+        <h3 class="subsection-title">Members</h3>
+
+        
+            
+<h4 class="name" id="LatencyContext"><span class="type-signature">(constant) </span>LatencyContext<span class="type-signature"> :<a href="LatencyContextValue.html">LatencyContextValue</a></span></h4>
+
+
+
+
+<div class="description">
+    Defines the supported KDC latency measurement contexts.
+
+Each context specifies the latency metrics applicable
+to a particular stage of Agent communication.
+
+The ordering of metrics determines their positions
+in LatencyRecord start and stop timelines.
+
+Context names and metric ordering must remain consistent
+with KDC-Java for cross-language interoperability.
+</div>
+
+
+
+    <h5>Type:</h5>
+    <ul>
+        <li>
+            
+<span class="param-type"><a href="LatencyContextValue.html">LatencyContextValue</a></span>
+
+
+        </li>
+    </ul>
+
+
+
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+        
+            
+<h4 class="name" id="LatencyMetric"><span class="type-signature">(constant) </span>LatencyMetric<span class="type-signature"> :string</span></h4>
+
+
+
+
+<div class="description">
+    Defines the latency metrics used by KDC to identify
+stages of Agent and Reply processing.
+
+These constants provide consistent metric names
+across KDC-Java and KDC-JS.
+
+Metrics describe the following operations:
+
+Agent processing:
+- AGENT_SERIALIZE: Agent serialization
+- AGENT_SEND: Agent transmission
+- AGENT_RECEIVE: Agent reception
+- AGENT_DESERIALIZE: Agent deserialization
+- AGENT_QUEUE: Time spent waiting in the Agent queue
+- AGENT_VISIT: Agent execution through its API
+
+Reply processing:
+- REPLY_WAIT: Time spent waiting for a Reply
+- REPLY_RECEIVE: Reply reception
+- REPLY_DESERIALIZE: Reply deserialization
+- REPLY_SERIALIZE: Reply serialization
+- REPLY_SEND: Reply transmission
+
+The object is frozen to prevent modification of
+metric definitions at runtime.
+
+These constants identify metric types; their presence
+does not imply that every metric is currently measured
+by KDC-JS.
+</div>
+
+
+
+    <h5>Type:</h5>
+    <ul>
+        <li>
+            
+<span class="param-type">string</span>
+
+
+        </li>
+    </ul>
+
+
+
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+        
+            
+<h4 class="name" id="RECEIVE_ASYNC"><span class="type-signature"></span>RECEIVE_ASYNC<span class="type-signature"></span></h4>
+
+
+
+
+<div class="description">
+    Asynchronous Agent receiving context.
+
+Measures Agent reception, deserialization,
+queue processing, and visitor execution.
+</div>
+
+
+
+
+
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+        
+            
+<h4 class="name" id="RECEIVE_SYNC"><span class="type-signature"></span>RECEIVE_SYNC<span class="type-signature"></span></h4>
+
+
+
+
+<div class="description">
+    Synchronous Agent receiving context.
+
+Measures Agent reception and processing,
+followed by Reply serialization and transmission.
+</div>
+
+
+
+
+
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+        
+            
+<h4 class="name" id="SEND_ASYNC"><span class="type-signature"></span>SEND_ASYNC<span class="type-signature"></span></h4>
+
+
+
+
+<div class="description">
+    Asynchronous Agent sending context.
+
+Measures Agent serialization and transmission.
+</div>
+
+
+
+
+
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+        
+            
+<h4 class="name" id="SEND_SYNC"><span class="type-signature"></span>SEND_SYNC<span class="type-signature"></span></h4>
+
+
+
+
+<div class="description">
+    Synchronous Agent sending context.
+
+Includes sending-side measurements, receiving-side
+Agent processing measurements returned with the Reply,
+and synchronous reply-wait/receive measurements.
+</div>
+
+
+
+
+
+
+
+<dl class="details">
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+
+    
+</dl>
+
+
+
+
+
+
+        
+    
+
+    
+
+    
+
+    
+</article>
+
+</section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="Agent.html">Agent</a></li><li><a href="ClientParameters.html">ClientParameters</a></li><li><a href="ClientParametersBuilder.html">ClientParametersBuilder</a></li><li><a href="LatencyRecord.html">LatencyRecord</a></li><li><a href="Parameters.html">Parameters</a></li><li><a href="ParametersBuilder.html">ParametersBuilder</a></li><li><a href="Reply.html">Reply</a></li><li><a href="WebSocketClient.html">WebSocketClient</a></li><li><a href="WebSocketClientEventHandlerAdapter.html">WebSocketClientEventHandlerAdapter</a></li><li><a href="WebSocketClientParameters.html">WebSocketClientParameters</a></li><li><a href="WebSocketClientParametersBuilder.html">WebSocketClientParametersBuilder</a></li></ul><h3>Global</h3><ul><li><a href="global.html#LatencyContext">LatencyContext</a></li><li><a href="global.html#LatencyMetric">LatencyMetric</a></li><li><a href="global.html#RECEIVE_ASYNC">RECEIVE_ASYNC</a></li><li><a href="global.html#RECEIVE_SYNC">RECEIVE_SYNC</a></li><li><a href="global.html#SEND_ASYNC">SEND_ASYNC</a></li><li><a href="global.html#SEND_SYNC">SEND_SYNC</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.5</a> on Wed Oct 28 2026 16:31:02 GMT-0400 (Eastern Daylight Time)
+<div class="kdc-copyright">
+    Copyright &copy; 2026 Kristen Software, LLC. All rights reserved.
+</div>
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

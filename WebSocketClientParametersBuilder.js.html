@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: WebSocketClientParametersBuilder.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: WebSocketClientParametersBuilder.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>
+import { WebSocketClientParameters } from "./WebSocketClientParameters.js";
+import { ClientParametersBuilder } from "./ClientParametersBuilder.js";
+
+/**
+ * Builder for configuring KDC-JS WebSocket clients.
+ *
+ * Extends ClientParametersBuilder with WebSocket-specific
+ * configuration, including the server URL, synchronous
+ * Reply timeout, and event handlers.
+ *
+ * Inherits common configuration methods for compression,
+ * encryption, CRC checking, receive buffer size, and
+ * Agent class registration.
+ *
+ * Default WebSocket settings:
+ * - serverUrl: null (must be configured)
+ * - syncReplyTimeout: 7500 milliseconds
+ * - eventHandlers: empty array
+ *
+ * The builder is mutable and supports method chaining.
+ * Calling build() validates the required configuration
+ * and creates a WebSocketClientParameters instance.
+ *
+ * @public
+ * @extends ClientParametersBuilder
+ */
+export class WebSocketClientParametersBuilder
+        extends ClientParametersBuilder {
+
+    /**
+     * Creates a builder with default WebSocket settings.
+     *
+     * Initializes the inherited client configuration
+     * and WebSocket-specific properties.
+     */
+    constructor() {
+        super();
+
+        /**
+         * URL of the WebSocket server.
+         *
+         * Required before building the configuration.
+         *
+         * @type {string|null}
+         */
+        this.serverUrl = null;
+
+        /**
+         * Maximum time to wait for a synchronous Reply,
+         * in milliseconds.
+         *
+         * Default: 7500 milliseconds.
+         *
+         * @type {number}
+         */
+        this.syncReplyTimeout = 7500;
+
+        /**
+         * Event handlers registered with the WebSocket client.
+         *
+         * @type {Array&lt;Object>}
+         */
+        this.eventHandlers = [];
+
+    }
+
+    // ------------------------------------------------------------------
+    // WebSocket-specific configuration
+    // ------------------------------------------------------------------
+
+    /**
+     * Sets the WebSocket server URL.
+     *
+     * The URL normally uses the ws:// or wss:// scheme.
+     *
+     * @param {string} value
+     *     WebSocket server URL.
+     *
+     * @returns {this}
+     *     This builder for method chaining.
+     *
+     * @throws {Error}
+     *     If value is null or undefined.
+     */
+    withServerUrl(value) {
+        if (value === null || value === undefined) {
+            throw new Error("serverUrl is required");
+        }
+        this.serverUrl = value;
+        return this;
+    }
+
+    /**
+     * Sets the synchronous Reply timeout.
+     *
+     * Determines how long sendSync() waits for a
+     * matching Reply before rejecting the operation.
+     *
+     * @param {number} value
+     *     Timeout in milliseconds. Must be a positive integer.
+     *
+     * @returns {this}
+     *     This builder for method chaining.
+     *
+     * @throws {Error}
+     *     If value is not a positive integer.
+     */
+    withSyncReplyTimeout(value) {
+
+        if (!Number.isInteger(value) || value &lt;= 0) {
+            throw new Error(
+                    "WebSocketClientParametersBuilder.withSyncReplyTimeout: " +
+                    "value must be a positive integer"
+                    );
+        }
+
+        this.syncReplyTimeout = value;
+
+        return this;
+    }
+
+    // ------------------------------------------------------------------
+    // Add Event Handler
+    // ------------------------------------------------------------------
+
+    /**
+     * Registers an event handler with the WebSocket client.
+     *
+     * Multiple handlers may be registered. Each handler
+     * is notified of applicable connection, Agent,
+     * and Reply events.
+     *
+     * @param {Object} eventHandler
+     *     Event handler implementing one or more
+     *     WebSocket client callbacks.
+     *
+     * @returns {this}
+     *     This builder for method chaining.
+     *
+     * @throws {Error}
+     *     If eventHandler is null or otherwise falsy.
+     */
+    addEventHandler(eventHandler) {
+
+        if (!eventHandler) {
+            throw new Error("ParametersBuilder.addEventHandler: invalid event handler");
+        }
+
+        this.eventHandlers.push(eventHandler);
+
+        return this;
+
+    }
+
+    // ------------------------------------------------------------------
+    // Build
+    // ------------------------------------------------------------------
+
+    /**
+     * Validates the required WebSocket configuration.
+     *
+     * Currently verifies that a server URL has been supplied.
+     *
+     * @returns {void}
+     *
+     * @throws {Error}
+     *     If serverUrl is null or undefined.
+     *
+     * @private
+     */
+    validate() {
+        if (this.serverUrl === null || this.serverUrl === undefined) {
+            throw new Error("WebSocketClientParametersBuilder: serverUrl must be set");
+        }
+    }
+
+    /**
+     * Validates the configuration and creates
+     * WebSocketClientParameters.
+     *
+     * @returns {WebSocketClientParameters}
+     *     Configured WebSocket client parameters.
+     *
+     * @throws {Error}
+     *     If the required server URL has not been configured.
+     */
+    build() {
+        this.validate();
+        return new WebSocketClientParameters(this);
+    }
+}
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="Agent.html">Agent</a></li><li><a href="ClientParameters.html">ClientParameters</a></li><li><a href="ClientParametersBuilder.html">ClientParametersBuilder</a></li><li><a href="LatencyRecord.html">LatencyRecord</a></li><li><a href="Parameters.html">Parameters</a></li><li><a href="ParametersBuilder.html">ParametersBuilder</a></li><li><a href="Reply.html">Reply</a></li><li><a href="WebSocketClient.html">WebSocketClient</a></li><li><a href="WebSocketClientEventHandlerAdapter.html">WebSocketClientEventHandlerAdapter</a></li><li><a href="WebSocketClientParameters.html">WebSocketClientParameters</a></li><li><a href="WebSocketClientParametersBuilder.html">WebSocketClientParametersBuilder</a></li></ul><h3>Global</h3><ul><li><a href="global.html#LatencyContext">LatencyContext</a></li><li><a href="global.html#LatencyMetric">LatencyMetric</a></li><li><a href="global.html#RECEIVE_ASYNC">RECEIVE_ASYNC</a></li><li><a href="global.html#RECEIVE_SYNC">RECEIVE_SYNC</a></li><li><a href="global.html#SEND_ASYNC">SEND_ASYNC</a></li><li><a href="global.html#SEND_SYNC">SEND_SYNC</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.5</a> on Tue Oct 27 2026 22:50:22 GMT-0400 (Eastern Daylight Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

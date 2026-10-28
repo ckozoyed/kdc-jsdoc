@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: Agent.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: Agent.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>
+import { randomUUID } from "node:crypto";
+import { LatencyRecord } from "./LatencyRecord.js";
+
+/**
+ * Base class representing a KDC software Agent.
+ *
+ * An Agent encapsulates routing information and application data
+ * exchanged between KDC endpoints.
+ *
+ * KDC-JS follows the KDC-Java Agent wire contract to maintain
+ * serialization compatibility between implementations.
+ *
+ * The receiving endpoint must have the corresponding Agent
+ * implementation available locally. KDC does not transmit
+ * executable class definitions.
+ *
+ * Runtime concerns such as clients, protocols, peers, replies,
+ * and serializers are managed separately and are not part of
+ * this class.
+ *
+ * @class
+ */
+export class Agent {
+
+    /**
+     * Delimiter used when constructing compound data keys.
+     *
+     * Matches the Java Agent.KEY_DELIMITER constant.
+     *
+     * @type {string}
+     */
+    static KEY_DELIMITER = ":";
+
+    /**
+     * Creates a new Agent with a unique identifier and
+     * initialized wire-contract properties.
+     *
+     * The Agent is initially asynchronous and contains no
+     * visitor routing information or application data.
+     */
+    constructor() {
+
+        /**
+         * Unique identifier assigned to this Agent.
+         *
+         * @type {string}
+         */
+        this.uuid = randomUUID();
+
+        /**
+         * Agent creation time, expressed as milliseconds
+         * since the Unix epoch.
+         *
+         * @type {number}
+         */
+        this.creationTimeStamp = Date.now();
+
+        /**
+         * Serialized Agent size in bytes.
+         *
+         * Initially zero until populated by the
+         * serialization process.
+         *
+         * @type {number}
+         */
+        this.sizeInBytes = 0;
+
+        /**
+         * Indicates whether the Agent uses synchronous
+         * request/reply processing.
+         *
+         * @type {boolean}
+         */
+        this.synchronous = false;
+
+        /**
+         * Name of the visitor method to invoke on the
+         * receiving endpoint.
+         *
+         * @type {string|null}
+         */
+        this.visitorMethodName = null;
+
+        /**
+         * Logical API class name used to identify the
+         * receiving API.
+         *
+         * @type {string|null}
+         */
+        this.apiClassName = null;
+
+        /**
+         * Latency measurements associated with this Agent.
+         *
+         * @type {LatencyRecord|null}
+         */
+        this.latencyRecord = null;
+
+        /**
+         * Application-defined key/value data associated
+         * with this Agent.
+         *
+         * @type {Object&lt;string, *>|null}
+         */
+        this.data = null;
+    }
+
+    /**
+     * Configures the visitor method and API class name
+     * used to dispatch this Agent.
+     *
+     * Both arguments must be non-empty strings.
+     *
+     * @param {string} visitorMethodName
+     *     Name of the visitor method to invoke.
+     * @param {string} apiClassName
+     *     Logical name of the receiving API class.
+     *
+     * @returns {Agent} This Agent for method chaining.
+     *
+     * @throws {TypeError}
+     *     If either argument is not a non-empty string.
+     */
+    setVisitorMethod(visitorMethodName, apiClassName) {
+
+        if (typeof visitorMethodName !== "string" ||
+                visitorMethodName.trim().length === 0) {
+            throw new TypeError(
+                    "visitorMethodName must be a non-empty string"
+                    );
+        }
+
+        if (typeof apiClassName !== "string" ||
+                apiClassName.trim().length === 0) {
+            throw new TypeError(
+                    "apiClassName must be a non-empty string"
+                    );
+        }
+
+        this.visitorMethodName = visitorMethodName;
+        this.apiClassName = apiClassName;
+
+        return this;
+    }
+
+    /**
+     * Initializes the latency record for this Agent
+     * using the specified latency context.
+     *
+     * An existing latency record is replaced.
+     * 
+     * @private
+     *
+     * @param {*} latencyContext
+     *     Latency context used to initialize the record.
+     *
+     * @returns {void}
+     *
+     * @throws {TypeError}
+     *     If latencyContext is null.
+     */
+    setLatencyContext(latencyContext) {
+
+        if (latencyContext === null) {
+            throw new TypeError(
+                    "latencyContext must not be null"
+                    );
+        }
+
+        this.latencyRecord = new LatencyRecord(latencyContext);
+    }
+
+    /**
+     * Associates an application-defined value with a key.
+     *
+     * If the data map does not exist, it is created.
+     * An existing value associated with the same key
+     * is replaced.
+     *
+     * @param {string} key
+     *     Non-empty key identifying the data value.
+     * @param {*} value
+     *     Application-defined value to store.
+     *
+     * @returns {Agent} This Agent for method chaining.
+     *
+     * @throws {TypeError}
+     *     If key is not a non-empty string.
+     */
+    setData(key, value) {
+
+        if (typeof key !== "string") {
+            throw new TypeError(
+                    "key must be a non-empty string"
+                    );
+        }
+
+        if (key.trim().length === 0) {
+            throw new TypeError(
+                    "key must be a non-empty string"
+                    );
+        }
+
+        if (this.data === null) {
+            this.data = {};
+        }
+
+        this.data[key] = value;
+
+        return this;
+    }
+
+    /**
+     * Retrieves an application-defined value associated
+     * with the specified key.
+     *
+     * @param {string} key
+     *     Non-empty key identifying the data value.
+     *
+     * @returns {*}
+     *     Value associated with the specified key.
+     *
+     * @throws {TypeError}
+     *     If key is not a non-empty string.
+     *
+     * @throws {Error}
+     *     If the data map is empty or the key does not exist.
+     */
+    getData(key) {
+
+        if (typeof key !== "string") {
+            throw new TypeError(
+                    "key must be a non-empty string"
+                    );
+        }
+
+        if (key.trim().length === 0) {
+            throw new TypeError(
+                    "key must be a non-empty string"
+                    );
+        }
+
+        if (this.data === null) {
+            throw new Error(
+                    "Attempt to get a data value from an empty data map."
+                    );
+        }
+
+        if (!Object.prototype.hasOwnProperty.call(this.data, key)) {
+            throw new Error(
+                    "Attempt to use a 'key' that does not exist in the data map."
+                    );
+        }
+
+        return this.data[key];
+    }
+
+    /**
+     * Determines whether the Agent contains a value
+     * associated with the specified key.
+     *
+     * @param {string} key
+     *     Non-empty key to check.
+     *
+     * @returns {boolean}
+     *     True if the key exists; otherwise false.
+     *
+     * @throws {TypeError}
+     *     If key is not a non-empty string.
+     */
+    hasData(key) {
+
+        if (typeof key !== "string") {
+            throw new TypeError(
+                    "key must be a non-empty string"
+                    );
+        }
+
+        if (key.trim().length === 0) {
+            throw new TypeError(
+                    "key must be a non-empty string"
+                    );
+        }
+
+        if (this.data === null) {
+            return false;
+        }
+
+        return Object.prototype.hasOwnProperty.call(this.data, key);
+    }
+}
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="Agent.html">Agent</a></li><li><a href="ClientParameters.html">ClientParameters</a></li><li><a href="ClientParametersBuilder.html">ClientParametersBuilder</a></li><li><a href="LatencyRecord.html">LatencyRecord</a></li><li><a href="Parameters.html">Parameters</a></li><li><a href="ParametersBuilder.html">ParametersBuilder</a></li><li><a href="Reply.html">Reply</a></li><li><a href="WebSocketClient.html">WebSocketClient</a></li><li><a href="WebSocketClientEventHandlerAdapter.html">WebSocketClientEventHandlerAdapter</a></li><li><a href="WebSocketClientParameters.html">WebSocketClientParameters</a></li><li><a href="WebSocketClientParametersBuilder.html">WebSocketClientParametersBuilder</a></li></ul><h3>Global</h3><ul><li><a href="global.html#LatencyContext">LatencyContext</a></li><li><a href="global.html#LatencyMetric">LatencyMetric</a></li><li><a href="global.html#RECEIVE_ASYNC">RECEIVE_ASYNC</a></li><li><a href="global.html#RECEIVE_SYNC">RECEIVE_SYNC</a></li><li><a href="global.html#SEND_ASYNC">SEND_ASYNC</a></li><li><a href="global.html#SEND_SYNC">SEND_SYNC</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.5</a> on Tue Oct 27 2026 22:50:22 GMT-0400 (Eastern Daylight Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

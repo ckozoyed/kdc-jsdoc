@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: KristenObjectsSerializer.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: KristenObjectsSerializer.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>
+const GCM_IV_LENGTH = 12;
+const GCM_TAG_BITS = 128;
+
+/**
+ * Serializes and deserializes JavaScript objects for KDC.
+ *
+ * Provides transport-independent object serialization using
+ * JSON, with optional GZIP compression and AES-GCM encryption.
+ *
+ * During serialization, an object is converted to JSON bytes,
+ * optionally compressed, and then optionally encrypted.
+ *
+ * During deserialization, these operations are reversed and
+ * the object is reconstructed using a registered constructor.
+ *
+ * Supports reconstruction of nested objects when constructors
+ * provide field type information through their static
+ * {@code types} property.
+ *
+ * This class is an internal implementation detail and is
+ * not part of the public developer API.
+ *
+ * @private
+ */
+export class KristenObjectsSerializer {
+
+    /**
+     * Creates an object serializer using the supplied
+     * KDC configuration parameters.
+     *
+     * @param {Parameters} parameters
+     *     Configuration containing compression, encryption,
+     *     and maximum receive buffer settings.
+     *
+     * @throws {Error}
+     *     If parameters is null or undefined.
+     */
+    constructor(parameters) {
+
+        if (!parameters) {
+            throw new Error("KristenObjectsSerializer: parameters required");
+        }
+
+        /**
+         * Maximum permitted incoming payload size in bytes.
+         *
+         * @type {number}
+         */
+        this.maxReceiveBufferSize = parameters.maxReceiveBufferSize;
+
+        /**
+         * Whether GZIP compression is enabled.
+         *
+         * @type {boolean}
+         */
+        this.compressed = !!parameters.compressed;
+
+        /**
+         * Raw encryption key used for AES-GCM encryption.
+         *
+         * @type {Uint8Array|null}
+         */
+        this.encryptionKey = parameters.encryptionKey;
+
+        if (this.encryptionKey) {
+            this.setEncryptionKey();
+        }
+
+    }
+
+    /**
+     * Serializes an object into a byte array.
+     *
+     * Converts the object to JSON, representing BigInt values
+     * as strings. The JSON is UTF-8 encoded, optionally
+     * compressed using GZIP, and optionally encrypted
+     * using AES-GCM.
+     *
+     * @param {Object} object
+     *     Object to serialize.
+     *
+     * @returns {Promise&lt;Uint8Array>}
+     *     Serialized object bytes.
+     *
+     * @throws {Error}
+     *     If the object is null or undefined.
+     */
+    async serialize(object) {
+
+        if (object === null || object === undefined) {
+            throw new Error("KristenObjectsSerializer.serialize: object is null");
+        }
+
+        // Convert object -> JSON string
+        const json = JSON.stringify(object, (_, value) =>
+            typeof value === "bigint" ? value.toString() : value
+        );
+
+        // Convert string -> bytes
+        let bytes = new TextEncoder().encode(json);
+
+        if (this.compressed) {
+            bytes = await this.compress(bytes);
+        }
+
+        if (this.encryptionKey) {
+            bytes = await this.encrypt(bytes);
+        }
+
+        return bytes;
+    }
+
+    /**
+     * Deserializes bytes into an instance of the specified class.
+     *
+     * Reverses encryption and compression, parses the JSON
+     * payload, and reconstructs the object using the supplied
+     * constructor and its optional field type metadata.
+     *
+     * Restores top-level msb and lsb fields to BigInt values
+     * when present.
+     *
+     * @param {Uint8Array} bytes
+     *     Serialized object bytes.
+     *
+     * @param {Function} ctor
+     *     Constructor of the object to reconstruct.
+     *
+     * @returns {Promise&lt;Object>}
+     *     Reconstructed object instance.
+     *
+     * @throws {TypeError}
+     *     If bytes is null or the constructor is invalid.
+     *
+     * @throws {Error}
+     *     If the incoming payload exceeds the configured
+     *     maximum receive buffer size.
+     */
+    async deserialize(bytes, ctor) {
+
+        if (!bytes) {
+            throw new TypeError("Cannot deserialize null bytes");
+        }
+
+        if (bytes.length > this.maxReceiveBufferSize) {
+            throw new Error("Bytes length too big.  size=" + bytes.length + ", max=" + this.maxReceiveBufferSize);
+        }
+
+        if (typeof ctor !== "function") {
+            throw new TypeError("Constructor must be provided for deserialization");
+        }
+
+        let working = bytes;
+
+        // Reverse order of serialize()
+        if (this.encryptionKey) {
+            working = await this.decrypt(working);
+        }
+
+        if (this.compressed) {
+            working = await this.expand(working);
+        }
+
+        // Bytes -> string
+        const json = new TextDecoder().decode(working);
+
+        // String -> plain object
+        const data = JSON.parse(json);
+
+        // Reconstitute typed object graph.
+        const instance = this.restoreObject(data, ctor);
+
+        // Restore BigInt fields if present
+        if ("msb" in instance)
+            instance.msb = BigInt(instance.msb);
+        if ("lsb" in instance)
+            instance.lsb = BigInt(instance.lsb);
+
+        return instance;
+    }
+
+    /**
+     * Compresses bytes using GZIP.
+     *
+     * @private
+     * @param {Uint8Array} bytes
+     *     Uncompressed bytes.
+     * @returns {Promise&lt;Uint8Array>}
+     *     GZIP-compressed bytes.
+     */
+    async compress(bytes) {
+        const cs = new CompressionStream("gzip");
+        const writer = cs.writable.getWriter();
+        writer.write(bytes);
+        writer.close();
+
+        const compressed = await new Response(cs.readable).arrayBuffer();
+        return new Uint8Array(compressed);
+    }
+
+    /**
+     * Decompresses GZIP-compressed bytes.
+     *
+     * @private
+     * @param {Uint8Array} bytes
+     *     Compressed bytes.
+     * @returns {Promise&lt;Uint8Array>}
+     *     Decompressed bytes.
+     */
+    async expand(bytes) {
+
+        const ds = new DecompressionStream("gzip");
+
+        const decompressed =
+                await new Response(
+                        new Blob([bytes])
+                        .stream()
+                        .pipeThrough(ds)
+                        ).arrayBuffer();
+
+        return new Uint8Array(decompressed);
+    }
+
+    /**
+     * Imports and caches the configured raw AES-GCM key.
+     *
+     * @private
+     * @returns {Promise&lt;CryptoKey>}
+     *     Promise resolving to the imported encryption key.
+     */
+    setEncryptionKey() {
+
+        if (!this.cryptoKeyPromise) {
+            this.cryptoKeyPromise = crypto.subtle.importKey(
+                    "raw",
+                    this.encryptionKey,
+                    {name: "AES-GCM"},
+                    false,
+                    ["encrypt", "decrypt"]
+                    );
+        }
+
+        return this.cryptoKeyPromise;
+    }
+
+    /**
+     * Encrypts bytes using AES-GCM.
+     *
+     * Generates a random 12-byte initialization vector (IV)
+     * and prepends it to the encrypted output.
+     *
+     * The encrypted output includes the authentication tag.
+     *
+     * @private
+     * @param {Uint8Array} data
+     *     Plaintext bytes.
+     * @returns {Promise&lt;Uint8Array>}
+     *     IV followed by ciphertext and authentication tag.
+     *
+     * @throws {Error}
+     *     If no encryption key is configured.
+     */
+    async encrypt(data) {
+
+        if (!this.encryptionKey) {
+            throw new Error("Encryption key not set in encrypt()");
+        }
+
+        const cryptoKey = await this.setEncryptionKey();
+
+        const iv = crypto.getRandomValues(
+                new Uint8Array(GCM_IV_LENGTH));
+
+        const encrypted = await crypto.subtle.encrypt(
+                {
+                    name: "AES-GCM",
+                    iv: iv,
+                    tagLength: GCM_TAG_BITS
+                },
+                cryptoKey,
+                data
+                );
+
+        const cipherBytes = new Uint8Array(encrypted);
+
+        const out = new Uint8Array(
+                iv.length + cipherBytes.length);
+
+        out.set(iv, 0);
+        out.set(cipherBytes, iv.length);
+
+        return out;
+    }
+
+    /**
+     * Decrypts AES-GCM encrypted bytes.
+     *
+     * Extracts the initialization vector from the beginning
+     * of the payload and validates the authentication tag
+     * during decryption.
+     *
+     * @private
+     * @param {Uint8Array} data
+     *     IV followed by ciphertext and authentication tag.
+     * @returns {Promise&lt;Uint8Array>}
+     *     Decrypted plaintext bytes.
+     *
+     * @throws {Error}
+     *     If the payload is too short or authentication fails.
+     */
+    async decrypt(data) {
+
+        const cryptoKey = await this.setEncryptionKey();
+
+        if (!cryptoKey) {
+            throw new Error("Encryption key not set in decrypt()");
+        }
+
+        if (data.length &lt; GCM_IV_LENGTH + 16) {
+            throw new Error("Encrypted payload too short");
+        }
+
+        const iv = data.slice(0, GCM_IV_LENGTH);
+        const encrypted = data.slice(GCM_IV_LENGTH);
+        try {
+            const decrypted = await crypto.subtle.decrypt(
+                    {
+                        name: "AES-GCM",
+                        iv: iv,
+                        tagLength: GCM_TAG_BITS
+                    },
+                    cryptoKey,
+                    encrypted
+                    );
+            return new Uint8Array(decrypted);
+        } catch (err) {
+            throw new Error("Decryption failed (auth tag mismatch)", {cause: err});
+        }
+    }
+
+    /**
+     * Reconstructs an object using its registered constructor.
+     *
+     * Uses the constructor's static types metadata to restore
+     * nested objects and arrays of typed objects.
+     *
+     * Properties without type metadata are assigned directly.
+     * Computed read-only properties are skipped.
+     *
+     * @private
+     * @param {Object} data
+     *     Parsed object data.
+     * @param {Function} ctor
+     *     Constructor used to create the object.
+     * @returns {Object}
+     *     Reconstructed object.
+     */
+    restoreObject(data, ctor) {
+
+        if (data === null || data === undefined) {
+            return data;
+        }
+
+        const instance = new ctor();
+        const types = ctor.types ?? {};
+
+        for (const [key, value] of Object.entries(data)) {
+
+            // Ignore computed read-only properties such as uuid.
+            if (this.isReadOnlyProperty(instance, key)) {
+                continue;
+            }
+
+            const fieldCtor = types[key];
+
+            if (fieldCtor &amp;&amp; value !== null &amp;&amp; value !== undefined) {
+
+                if (Array.isArray(fieldCtor)) {
+
+                    const elementCtor = fieldCtor[0];
+
+                    instance[key] = value.map(
+                            item => this.restoreObject(item, elementCtor)
+                    );
+
+                } else {
+
+                    instance[key] =
+                            this.restoreObject(value, fieldCtor);
+                }
+
+            } else {
+
+                instance[key] = value;
+
+            }
+        }
+
+        return instance;
+    }
+
+    /**
+     * Determines whether a property is a computed read-only
+     * accessor on an object or its prototype chain.
+     *
+     * @private
+     * @param {Object} object
+     *     Object to inspect.
+     * @param {string} key
+     *     Property name.
+     * @returns {boolean}
+     *     True if the property has a getter without a setter.
+     */
+    isReadOnlyProperty(object, key) {
+
+        let prototype = object;
+
+        while (prototype) {
+
+            const descriptor =
+                    Object.getOwnPropertyDescriptor(prototype, key);
+
+            if (descriptor) {
+
+                return descriptor.get !== undefined &amp;&amp;
+                        descriptor.set === undefined;
+            }
+
+            prototype = Object.getPrototypeOf(prototype);
+        }
+
+        return false;
+    }
+}
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="Agent.html">Agent</a></li><li><a href="ClientParameters.html">ClientParameters</a></li><li><a href="ClientParametersBuilder.html">ClientParametersBuilder</a></li><li><a href="LatencyRecord.html">LatencyRecord</a></li><li><a href="Parameters.html">Parameters</a></li><li><a href="ParametersBuilder.html">ParametersBuilder</a></li><li><a href="Reply.html">Reply</a></li><li><a href="WebSocketClient.html">WebSocketClient</a></li><li><a href="WebSocketClientEventHandlerAdapter.html">WebSocketClientEventHandlerAdapter</a></li><li><a href="WebSocketClientParameters.html">WebSocketClientParameters</a></li><li><a href="WebSocketClientParametersBuilder.html">WebSocketClientParametersBuilder</a></li></ul><h3>Global</h3><ul><li><a href="global.html#LatencyContext">LatencyContext</a></li><li><a href="global.html#LatencyMetric">LatencyMetric</a></li><li><a href="global.html#RECEIVE_ASYNC">RECEIVE_ASYNC</a></li><li><a href="global.html#RECEIVE_SYNC">RECEIVE_SYNC</a></li><li><a href="global.html#SEND_ASYNC">SEND_ASYNC</a></li><li><a href="global.html#SEND_SYNC">SEND_SYNC</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.5</a> on Tue Oct 27 2026 22:50:22 GMT-0400 (Eastern Daylight Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

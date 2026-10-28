@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: WebSocketClient.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: WebSocketClient.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>
+import { WebSocketClientParameters } from "./WebSocketClientParameters.js";
+import { LatencyContext } from "./LatencyContext.js"
+import { Agent } from "./Agent.js";
+import { Reply } from "./Reply.js";
+import { Mutex } from "./Mutex.js";
+
+/**
+ * WebSocket client for Kristen Data Comms (KDC-JS).
+ *
+ * Provides communication with a KDC WebSocket server,
+ * supporting asynchronous Agent transmission, synchronous
+ * request/reply operations, and reception of Agents and Replies.
+ *
+ * Incoming messages are deserialized into registered Agent
+ * classes and delivered to registered event handlers.
+ *
+ * Synchronous requests are serialized using an internal mutex,
+ * allowing only one request to await a Reply at a time.
+ *
+ * @public
+ */
+export class WebSocketClient {
+
+    /**
+     * Creates a WebSocket client.
+     *
+     * The client is initially disconnected. Call connect()
+     * to establish a connection.
+     *
+     * @param {WebSocketClientParameters} parameters
+     *     WebSocket client configuration.
+     *
+     * @throws {Error}
+     *     If parameters is not a WebSocketClientParameters instance.
+     */
+    constructor(parameters) {
+
+        if (!(parameters instanceof WebSocketClientParameters)) {
+            throw new Error("[KDC-JS] WebSocketClient requires WebSocketClientParameters");
+        }
+
+        this.webSocket = null;
+
+        this.pendingSyncReply = null;
+        this.pendingCloseResolve = null;
+        this.wsParameters = parameters;
+        this.agentSerializer = this.wsParameters.agentSerializer;
+        this.url = this.wsParameters.serverUrl;
+        this.eventHandlers = this.wsParameters.eventHandlers;
+        this.sendSyncMutex = new Mutex();
+
+    }
+
+    /* --------------------------------------------------
+     * Connection
+     * -------------------------------------------------- */
+
+    /**
+     * Establishes a connection to the configured WebSocket server.
+     *
+     * Notifies registered event handlers when the connection
+     * is established.
+     *
+     * @returns {Promise&lt;WebSocketClient>}
+     *     Resolves with this client when connected.
+     *
+     * @throws {Error}
+     *     If already connected or the connection attempt fails.
+     */
+    connect() {
+
+        if (this.webSocket) {
+            return Promise.reject(
+                    new Error("WebSocketClient: already connected")
+                    );
+        }
+
+        return new Promise((resolve, reject) => {
+
+            const webSocket = new WebSocket(this.url);
+
+            this.webSocket = webSocket;
+
+            webSocket.binaryType = "arraybuffer";
+
+            webSocket.onopen = () => {
+                this.#connectionEstablished();
+                resolve(this);
+            };
+
+            webSocket.onclose = (event) => {
+
+                console.log(
+                        "[KDC-JS] WebSocket CLOSED:",
+                        "code =", event.code,
+                        "reason =", event.reason,
+                        "wasClean =", event.wasClean
+                        );
+
+                this.#connectionClosed(webSocket);
+            };
+
+            webSocket.onerror = (event) => {
+                this.#connectionError(event);
+                reject(new Error("WebSocketClient: connection failed"));
+            };
+
+            webSocket.onmessage = (event) => this.#receive(event);
+
+        });
+    }
+
+    /**
+     * Closes the WebSocket connection.
+     *
+     * Rejects any pending synchronous request and initiates
+     * a normal WebSocket closure.
+     *
+     * If no connection exists, returns immediately.
+     *
+     * @returns {Promise&lt;void>}
+     *     Resolves when the connection has closed.
+     */
+    async close() {
+
+        this.#rejectPendingSyncReply(
+                "WebSocketClient: connection closed"
+                );
+
+        if (!this.webSocket) {
+            return;
+        }
+
+        const webSocket = this.webSocket;
+
+        await new Promise((resolve) => {
+
+            this.pendingCloseResolve = resolve;
+
+            webSocket.close(1000, "Normal closure");
+        });
+    }
+
+    /**
+     * Notifies registered event handlers that the
+     * WebSocket connection has been established.
+     *
+     * @private
+     * @returns {void}
+     */
+    #connectionEstablished() {
+
+        console.log("[KDC-JS] WebSocket connected:", this.url);
+
+        for (const handler of this.eventHandlers) {
+            handler.onConnectionEstablished?.(this);
+        }
+    }
+
+    /**
+     * Handles closure of the WebSocket connection.
+     *
+     * Rejects any pending synchronous request, clears
+     * the active connection, notifies registered event
+     * handlers, and completes a pending close operation.
+     *
+     * @private
+     * @returns {void}
+     */
+    #connectionClosed() {
+
+        this.#rejectPendingSyncReply(
+                "WebSocketClient: connection closed"
+                );
+
+        this.webSocket = null;
+
+        for (const handler of this.eventHandlers) {
+            handler.onConnectionClosed?.(this);
+        }
+
+        if (this.pendingCloseResolve) {
+
+            const resolve = this.pendingCloseResolve;
+            this.pendingCloseResolve = null;
+
+            resolve();
+        }
+    }
+
+    /**
+     * Logs a WebSocket connection error.
+     *
+     * @private
+     * @param {Event} event
+     *     WebSocket error event.
+     * @returns {void}
+     */
+    #connectionError(event) {
+
+        console.error(
+                "[KDC-JS] WebSocket connection error:",
+                this.url,
+                event
+                );
+    }
+
+    /**
+     * Rejects the pending synchronous request, if any.
+     *
+     * Clears the associated timeout and pending Reply state.
+     *
+     * @private
+     * @param {string} message
+     *     Error message supplied to the rejected request.
+     * @returns {void}
+     */
+    #rejectPendingSyncReply(message) {
+
+        if (!this.pendingSyncReply) {
+            return;
+        }
+
+        const pending = this.pendingSyncReply;
+
+        this.pendingSyncReply = null;
+
+        clearTimeout(pending.timer);
+
+        pending.reject(new Error(message));
+    }
+
+    /* --------------------------------------------------
+     * Send Async
+     * -------------------------------------------------- */
+
+    /**
+     * Sends an Agent asynchronously.
+     *
+     * Marks the Agent as asynchronous, assigns the
+     * SEND_ASYNC latency context, serializes the Agent,
+     * and submits its bytes to the WebSocket.
+     *
+     * Notifies registered event handlers before sending.
+     *
+     * @param {Agent} agent
+     *     Agent to transmit.
+     *
+     * @returns {Promise&lt;void>}
+     *     Resolves after the Agent has been submitted
+     *     to the WebSocket for transmission.
+     *
+     * @throws {Error}
+     *     If the Agent is invalid or the WebSocket is not open.
+     */
+    async sendAsync(agent) {
+
+        if (!(agent instanceof Agent)) {
+            throw new Error("WebSocketClient.sendAsync: invalid agent");
+        }
+
+        if (!this.webSocket || this.webSocket.readyState !== WebSocket.OPEN) {
+            throw new Error("WebSocketClient.sendAsync: web socket not open");
+        }
+
+        agent.synchronous = false;
+
+        agent.setLatencyContext(LatencyContext.SEND_ASYNC);
+
+        const bytes = await this.agentSerializer.serialize(agent);
+
+        for (const handler of this.eventHandlers) {
+            handler.onSendingAsyncAgent?.(agent);
+        }
+
+        this.webSocket.send(bytes);
+    }
+
+    /* --------------------------------------------------
+     * Send Sync
+     * -------------------------------------------------- */
+
+    /**
+     * Sends an Agent synchronously and waits for its Reply.
+     *
+     * Marks the Agent as synchronous, assigns the
+     * SEND_SYNC latency context, serializes and transmits
+     * the Agent, and waits for a Reply with a matching UUID.
+     *
+     * Only one synchronous request is active at a time.
+     * Additional requests wait for the internal mutex.
+     *
+     * @param {Agent} agent
+     *     Agent to transmit.
+     *
+     * @returns {Promise&lt;Reply>}
+     *     Reply matching the transmitted Agent UUID.
+     *
+     * @throws {Error}
+     *     If the Agent is invalid, the WebSocket is not open,
+     *     the send operation fails, the connection closes,
+     *     or the Reply timeout expires.
+     */
+    async sendSync(agent) {
+
+        await this.sendSyncMutex.lock();
+
+        try {
+
+            if (!(agent instanceof Agent)) {
+                throw new Error("WebSocketClient.sendSync: invalid agent");
+            }
+
+            if (!this.webSocket ||
+                    this.webSocket.readyState !== WebSocket.OPEN) {
+
+                throw new Error(
+                        "WebSocketClient.sendSync: web socket not open"
+                        );
+            }
+
+            agent.synchronous = true;
+
+            agent.setLatencyContext(LatencyContext.SEND_SYNC);
+
+            const bytes = await this.agentSerializer.serialize(agent);
+
+            return await new Promise((resolve, reject) => {
+
+                const timer = setTimeout(() => {
+
+                    this.pendingSyncReply = null;
+
+                    reject(
+                            new Error(
+                                    "WebSocketClient.sendSync: timeout waiting for reply"
+                                    )
+                            );
+
+                }, this.wsParameters.syncReplyTimeout);
+
+                this.pendingSyncReply = {
+                    uuid: agent.uuid,
+                    resolve,
+                    reject,
+                    timer
+                };
+
+                for (const handler of this.eventHandlers) {
+                    handler.onSendingSyncAgent?.(agent);
+                }
+
+                try {
+
+                    this.webSocket.send(bytes);
+
+                } catch (err) {
+
+                    clearTimeout(timer);
+
+                    this.pendingSyncReply = null;
+
+                    reject(err);
+                }
+            });
+
+        } finally {
+
+            this.sendSyncMutex.unlock();
+        }
+    }
+
+    /* --------------------------------------------------
+     * Receive
+     * -------------------------------------------------- */
+
+    /**
+     * Processes an incoming WebSocket message.
+     *
+     * Validates the binary payload size, deserializes
+     * the received object, and dispatches it to registered
+     * event handlers.
+     *
+     * Replies are matched against pending synchronous
+     * requests using their UUID.
+     *
+     * Unknown objects and deserialization errors are logged.
+     *
+     * @private
+     * @param {MessageEvent} event
+     *     Incoming WebSocket message event.
+     *
+     * @returns {Promise&lt;void>}
+     */
+    async #receive(event) {
+
+        if (!(event.data instanceof ArrayBuffer)) {
+            console.warn("[KDC-JS] Ignoring non-binary message");
+            return;
+        }
+
+        if (event.data.byteLength > this.wsParameters.maxReceiveBufferSize) {
+
+            console.error("[KDC-JS] Packet exceeds maximum receive buffer size.");
+
+            this.webSocket.close(1009, "Message too large");
+
+            return;
+        }
+
+        try {
+
+            const obj = await this.agentSerializer.deserialize(event.data);
+
+            console.log(
+                    "[KDC-JS] Received object:",
+                    obj.constructor.name ?? typeof obj,
+                    obj
+                    );
+
+            // ============================================================
+            // Reply
+            // ============================================================
+            if (obj instanceof Reply) {
+
+                console.log(
+                        "[KDC-JS] Reply UUID:",
+                        obj.uuid,
+                        "pending UUID:",
+                        this.pendingSyncReply?.uuid
+                        );
+
+                // Notify all registered event handlers.
+                for (const handler of this.eventHandlers) {
+                    handler.onReceivedReply?.(obj);
+                }
+
+                // If sendSync() is waiting for a reply, complete it.
+                if (this.pendingSyncReply) {
+
+                    const pending = this.pendingSyncReply;
+
+                    if (obj.uuid === pending.uuid) {
+
+                        console.log("[KDC-JS] Reply MATCH");
+
+                        this.pendingSyncReply = null;
+
+                        clearTimeout(pending.timer);
+
+                        pending.resolve(obj);
+
+                    } else {
+
+                        console.log("[KDC-JS] Reply DOES NOT MATCH pending request");
+
+                    }
+                }
+
+                // ============================================================
+                // Agent
+                // ============================================================
+            } else if (obj instanceof Agent) {
+
+                for (const handler of this.eventHandlers) {
+                    handler.onReceivedAgent?.(obj);
+                }
+
+                // ============================================================
+                // Unknown object
+                // ============================================================
+            } else {
+
+                throw new Error(
+                        "WebSocketClient.receive: expected Agent or Reply. Received an unknown object."
+                        );
+            }
+
+        } catch (err) {
+
+            console.error(
+                    "[KDC-JS] Error receiving message:",
+                    err
+                    );
+        }
+    }
+}
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="Agent.html">Agent</a></li><li><a href="ClientParameters.html">ClientParameters</a></li><li><a href="ClientParametersBuilder.html">ClientParametersBuilder</a></li><li><a href="LatencyRecord.html">LatencyRecord</a></li><li><a href="Parameters.html">Parameters</a></li><li><a href="ParametersBuilder.html">ParametersBuilder</a></li><li><a href="Reply.html">Reply</a></li><li><a href="WebSocketClient.html">WebSocketClient</a></li><li><a href="WebSocketClientEventHandlerAdapter.html">WebSocketClientEventHandlerAdapter</a></li><li><a href="WebSocketClientParameters.html">WebSocketClientParameters</a></li><li><a href="WebSocketClientParametersBuilder.html">WebSocketClientParametersBuilder</a></li></ul><h3>Global</h3><ul><li><a href="global.html#LatencyContext">LatencyContext</a></li><li><a href="global.html#LatencyMetric">LatencyMetric</a></li><li><a href="global.html#RECEIVE_ASYNC">RECEIVE_ASYNC</a></li><li><a href="global.html#RECEIVE_SYNC">RECEIVE_SYNC</a></li><li><a href="global.html#SEND_ASYNC">SEND_ASYNC</a></li><li><a href="global.html#SEND_SYNC">SEND_SYNC</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.5</a> on Tue Oct 27 2026 22:50:22 GMT-0400 (Eastern Daylight Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

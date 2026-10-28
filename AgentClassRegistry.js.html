@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: AgentClassRegistry.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: AgentClassRegistry.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>
+/**
+ * Maintains bidirectional mappings between JavaScript Agent
+ * constructors and their corresponding Java fully qualified
+ * class names.
+ *
+ * Used internally by KDC to resolve Agent classes during
+ * serialization and deserialization.
+ *
+ * Agent registrations are configured through KDC Parameters.
+ *
+ * This class is an internal implementation detail and is
+ * not part of the public developer API.
+ *
+ * @private
+ */
+export class AgentClassRegistry {
+
+    /**
+     * Creates an empty Agent class registry.
+     */
+    constructor() {
+
+        /**
+         * Maps JavaScript constructors to Java class names.
+         *
+         * @private
+         * @type {Map&lt;Function, string>}
+         */
+        this.jsToJava = new Map();
+
+        /**
+         * Maps Java class names to JavaScript constructors.
+         *
+         * @private
+         * @type {Map&lt;string, Function>}
+         */
+        this.javaToJs = new Map();
+    }
+
+    /**
+     * Registers a mapping between a JavaScript Agent class
+     * and its corresponding Java fully qualified class name.
+     *
+     * The mapping is used during serialization and
+     * deserialization to identify compatible Agent classes.
+     *
+     * Both the JavaScript class and Java class name must
+     * be unique within this registry.
+     *
+     * @param {Function} jsClass
+     *     JavaScript Agent constructor to register.
+     * @param {string} javaFqcn
+     *     Fully qualified Java class name.
+     *
+     * @returns {void}
+     *
+     * @throws {Error}
+     *     If the arguments are invalid or either mapping
+     *     has already been registered.
+     */
+    register(jsClass, javaFqcn) {
+
+        if (typeof jsClass !== "function" ||
+                typeof javaFqcn !== "string" ||
+                javaFqcn.length === 0) {
+
+            throw new Error(
+                    "AgentClassRegistry.register: invalid arguments"
+                    );
+        }
+
+        if (this.jsToJava.has(jsClass) || this.javaToJs.has(javaFqcn)) {
+            throw new Error(
+                    `AgentClassRegistry.register: duplicate registration for ${javaFqcn}`
+                    );
+        }
+
+        this.jsToJava.set(jsClass, javaFqcn);
+        this.javaToJs.set(javaFqcn, jsClass);
+    }
+
+    /**
+     * Resolves the registered Java class name for an
+     * Agent instance.
+     *
+     * Used by the sending path to identify the Java class
+     * name written into the serialized Agent packet.
+     *
+     * @param {Object} agent
+     *     Agent instance whose class name is to be resolved.
+     *
+     * @returns {string}
+     *     Registered Java fully qualified class name.
+     *
+     * @throws {Error}
+     *     If the Agent is invalid or its constructor
+     *     has not been registered.
+     */
+    resolve(agent) {
+
+        if (!agent) {
+            throw new Error(
+                    "AgentClassRegistry.resolve: invalid agent"
+                    );
+        }
+
+        const fqcn = this.jsToJava.get(agent.constructor);
+
+        if (!fqcn) {
+            throw new Error(
+                    `No Java class mapping for agent: ${agent.constructor.name}`
+                    );
+        }
+
+        return fqcn;
+    }
+
+    /**
+     * Determines whether a Java class name is registered.
+     *
+     * Used by the receiving path to check whether an
+     * incoming Agent can be reconstructed.
+     *
+     * @param {string} javaFqcn
+     *     Fully qualified Java class name to check.
+     *
+     * @returns {boolean}
+     *     True if the class name is registered;
+     *     otherwise false.
+     */
+    has(javaFqcn) {
+        return this.javaToJs.has(javaFqcn);
+    }
+
+    /**
+     * Returns the JavaScript constructor registered for
+     * the specified Java class name.
+     *
+     * Used during deserialization to reconstruct an
+     * incoming Agent as the appropriate JavaScript class.
+     *
+     * @param {string} javaFqcn
+     *     Fully qualified Java class name.
+     *
+     * @returns {Function}
+     *     Registered JavaScript Agent constructor.
+     *
+     * @throws {Error}
+     *     If the Java class name is not registered.
+     */
+    get(javaFqcn) {
+
+        const jsClass = this.javaToJs.get(javaFqcn);
+
+        if (!jsClass) {
+            throw new Error(
+                    `No JS class registered for Java agent: ${javaFqcn}`
+                    );
+        }
+
+        return jsClass;
+    }
+}
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="Agent.html">Agent</a></li><li><a href="ClientParameters.html">ClientParameters</a></li><li><a href="ClientParametersBuilder.html">ClientParametersBuilder</a></li><li><a href="LatencyRecord.html">LatencyRecord</a></li><li><a href="Parameters.html">Parameters</a></li><li><a href="ParametersBuilder.html">ParametersBuilder</a></li><li><a href="Reply.html">Reply</a></li><li><a href="WebSocketClient.html">WebSocketClient</a></li><li><a href="WebSocketClientEventHandlerAdapter.html">WebSocketClientEventHandlerAdapter</a></li><li><a href="WebSocketClientParameters.html">WebSocketClientParameters</a></li><li><a href="WebSocketClientParametersBuilder.html">WebSocketClientParametersBuilder</a></li></ul><h3>Global</h3><ul><li><a href="global.html#LatencyContext">LatencyContext</a></li><li><a href="global.html#LatencyMetric">LatencyMetric</a></li><li><a href="global.html#RECEIVE_ASYNC">RECEIVE_ASYNC</a></li><li><a href="global.html#RECEIVE_SYNC">RECEIVE_SYNC</a></li><li><a href="global.html#SEND_ASYNC">SEND_ASYNC</a></li><li><a href="global.html#SEND_SYNC">SEND_SYNC</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.5</a> on Tue Oct 27 2026 22:50:22 GMT-0400 (Eastern Daylight Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

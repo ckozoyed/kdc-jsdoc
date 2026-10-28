@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: LatencyRecord.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: LatencyRecord.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>
+/**
+ * Records latency measurement timestamps for a KDC Agent.
+ *
+ * A LatencyRecord maintains start and stop timelines for
+ * the latency metrics defined by its associated context.
+ *
+ * Each metric occupies a corresponding position in both
+ * timelines. The context determines the available metrics
+ * and their ordering.
+ *
+ * The startTimeLine, stopTimeLine, and latencyContext
+ * properties form part of the serialized KDC wire contract.
+ *
+ * The runtime context reference is maintained separately
+ * and is excluded from normal property enumeration.
+ *
+ * @class
+ */
+export class LatencyRecord {
+
+    /**
+     * Creates a latency record for the specified context.
+     *
+     * Both timelines are initialized to zero for every
+     * metric defined by the context.
+     *
+     * @param {*} latencyContext
+     *     Context defining the available latency metrics.
+     *     Must provide size(), indexOf(), and name.
+     *
+     * @throws {TypeError}
+     *     If latencyContext is null.
+     */
+    constructor(latencyContext) {
+
+        if (latencyContext === null) {
+            throw new TypeError(
+                    "latencyContext must not be null"
+                    );
+        }
+
+        /**
+         * Start timestamps for each latency metric.
+         *
+         * Array positions correspond to the metric ordering
+         * defined by the latency context.
+         *
+         * @type {number[]}
+         */
+        this.startTimeLine =
+                new Array(latencyContext.size()).fill(0);
+
+        /**
+         * Stop timestamps for each latency metric.
+         *
+         * Array positions correspond to the metric ordering
+         * defined by the latency context.
+         *
+         * @type {number[]}
+         */
+        this.stopTimeLine =
+                new Array(latencyContext.size()).fill(0);
+
+        /**
+         * Name of the latency context associated with
+         * this record.
+         *
+         * @type {string}
+         */
+        this.latencyContext = latencyContext.name;
+
+        /**
+         * Runtime reference to the latency context.
+         *
+         * This property is non-enumerable and is not
+         * included in normal object serialization.
+         *
+         * @private
+         */
+        Object.defineProperty(this, "_context", {
+            value: latencyContext,
+            writable: false,
+            enumerable: false
+        });
+    }
+
+    /**
+     * Marks the specified latency metric as not applicable.
+     *
+     * Both start and stop timeline entries are assigned
+     * the sentinel value 1, distinguishing an inapplicable
+     * metric from an uninitialized metric (0).
+     *
+     * This method is intended for internal KDC runtime use
+     * and is not part of the public developer API.
+     *
+     * @private
+     *
+     * @param {*} metric
+     *     Latency metric to mark as not applicable.
+     *
+     * @returns {void}
+     */
+    metricNotApplicable(metric) {
+
+        const index =
+                this._context.indexOf(metric);
+
+        this.startTimeLine[index] = 1;
+        this.stopTimeLine[index] = 1;
+    }
+}
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="Agent.html">Agent</a></li><li><a href="ClientParameters.html">ClientParameters</a></li><li><a href="ClientParametersBuilder.html">ClientParametersBuilder</a></li><li><a href="LatencyRecord.html">LatencyRecord</a></li><li><a href="Parameters.html">Parameters</a></li><li><a href="ParametersBuilder.html">ParametersBuilder</a></li><li><a href="Reply.html">Reply</a></li><li><a href="WebSocketClient.html">WebSocketClient</a></li><li><a href="WebSocketClientEventHandlerAdapter.html">WebSocketClientEventHandlerAdapter</a></li><li><a href="WebSocketClientParameters.html">WebSocketClientParameters</a></li><li><a href="WebSocketClientParametersBuilder.html">WebSocketClientParametersBuilder</a></li></ul><h3>Global</h3><ul><li><a href="global.html#LatencyContext">LatencyContext</a></li><li><a href="global.html#LatencyMetric">LatencyMetric</a></li><li><a href="global.html#RECEIVE_ASYNC">RECEIVE_ASYNC</a></li><li><a href="global.html#RECEIVE_SYNC">RECEIVE_SYNC</a></li><li><a href="global.html#SEND_ASYNC">SEND_ASYNC</a></li><li><a href="global.html#SEND_SYNC">SEND_SYNC</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.5</a> on Tue Oct 27 2026 22:50:22 GMT-0400 (Eastern Daylight Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

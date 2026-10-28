@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: AgentSerializer.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: AgentSerializer.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>import { KristenObjectsSerializer } from "./KristenObjectsSerializer.js";
+import { AgentPacket } from "./AgentPacket.js";
+
+/**
+ * Serializes and deserializes KDC Agents using the configured
+ * object serializer and versioned wire packet format.
+ *
+ * Responsibilities include:
+ * - Resolving registered Agent class names.
+ * - Serializing and deserializing Agent payloads.
+ * - Creating and reading versioned Agent packets.
+ * - Configuring packet CRC, compression, and encryption flags.
+ * - Validating incoming packet configuration.
+ * - Enforcing the maximum receive buffer size.
+ *
+ * Agent class registrations and serialization settings
+ * are supplied through KDC Parameters.
+ *
+ * This class is an internal implementation detail and
+ * is not part of the public developer API.
+ *
+ * @private
+ */
+export class AgentSerializer {
+
+    /**
+     * Creates an Agent serializer using the supplied parameters.
+     *
+     * @param {Object} parameters
+     *     KDC serialization and Agent registration parameters.
+     *
+     * @throws {Error}
+     *     If parameters are not supplied.
+     */
+    constructor(parameters) {
+
+        if (!parameters) {
+            throw new Error("AgentSerializer: parameters required");
+        }
+
+        this.objectSerializer = new KristenObjectsSerializer(parameters);
+        this.crcCheck = parameters.crcCheck;
+        this.compressed = parameters.compressed;
+        this.encrypted = parameters.encryptionKey != null;
+        this.agentRegistry = parameters.agentRegistry;
+        this.maxReceiveBufferSize = parameters.maxReceiveBufferSize;
+        Object.freeze(this);
+    }
+
+    /**
+     * Serializes an Agent into a versioned KDC wire packet.
+     *
+     * Resolves the registered Java class name, serializes the
+     * Agent payload, and applies the configured packet flags.
+     *
+     * @param {Object} agent
+     *     Agent instance to serialize.
+     *
+     * @returns {Promise&lt;Uint8Array>}
+     *     Serialized wire packet.
+     *
+     * @throws {TypeError}
+     *     If the Agent is null or undefined.
+     *
+     * @throws {Error}
+     *     If serialization or class resolution fails.
+     */
+    async serialize(agent) {
+
+        if (!agent) {
+            throw new TypeError("AgentSerializer.serialize: agent is null");
+        }
+
+        const className = this.agentRegistry.resolve(agent);
+
+        const payload = await this.objectSerializer.serialize(agent);
+
+        const packet = AgentPacket.create();
+
+        packet.className = className;
+        packet.payload = payload;
+        packet.setCrcCheck(this.crcCheck);
+        packet.setCompressed(this.objectSerializer.compressed);
+        packet.setEncrypted(this.objectSerializer.encryptionKey != null);
+
+        return packet.writePacketToWire();
+
+    }
+
+    /**
+     * Deserializes a KDC wire packet into a registered Agent.
+     *
+     * Validates the receive buffer size, packet format,
+     * compression and encryption configuration, and Agent
+     * class registration before reconstructing the Agent.
+     *
+     * @param {Uint8Array} bytes
+     *     Serialized KDC wire packet.
+     *
+     * @returns {Promise&lt;Object>}
+     *     Deserialized Agent instance.
+     *
+     * @throws {Error}
+     *     If the packet is invalid, exceeds the receive
+     *     buffer limit, has incompatible configuration,
+     *     or references an unregistered Agent class.
+     */
+    async deserialize(bytes) {
+
+        if (!bytes) {
+            throw new Error("Bytes not defined in deserialize.");
+        }
+
+        if (bytes.length > this.maxReceiveBufferSize) {
+            throw new Error("Bytes length too big.  size=" + bytes.length + ", max=" + this.maxReceiveBufferSize);
+        }
+
+        const packet = AgentPacket.create();
+
+        packet.readPacketFromWire(bytes);
+
+        if (packet.compressed !== this.objectSerializer.compressed) {
+            throw new Error(
+                    `Compression configuration mismatch. ` +
+                    `packet=${packet.compressed}, ` +
+                    `serializer=${this.objectSerializer.compressed}`);
+        }
+        const serializerEncrypted = this.objectSerializer.encryptionKey != null;
+
+        if (packet.encrypted !== serializerEncrypted) {
+            throw new Error(
+                    `Encryption configuration mismatch. ` +
+                    `packet=${packet.encrypted}, ` +
+                    `serializer=${serializerEncrypted}`);
+        }
+
+        if (!this.agentRegistry.has(packet.className)) {
+            throw new Error(`Agent class not registered: ${packet.className}`);
+        }
+
+        const ctor = this.agentRegistry.get(packet.className);
+
+        return await this.objectSerializer.deserialize(
+                packet.payload,
+                ctor);
+    }
+}
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="Agent.html">Agent</a></li><li><a href="ClientParameters.html">ClientParameters</a></li><li><a href="ClientParametersBuilder.html">ClientParametersBuilder</a></li><li><a href="LatencyRecord.html">LatencyRecord</a></li><li><a href="Parameters.html">Parameters</a></li><li><a href="ParametersBuilder.html">ParametersBuilder</a></li><li><a href="Reply.html">Reply</a></li><li><a href="WebSocketClient.html">WebSocketClient</a></li><li><a href="WebSocketClientEventHandlerAdapter.html">WebSocketClientEventHandlerAdapter</a></li><li><a href="WebSocketClientParameters.html">WebSocketClientParameters</a></li><li><a href="WebSocketClientParametersBuilder.html">WebSocketClientParametersBuilder</a></li></ul><h3>Global</h3><ul><li><a href="global.html#LatencyContext">LatencyContext</a></li><li><a href="global.html#LatencyMetric">LatencyMetric</a></li><li><a href="global.html#RECEIVE_ASYNC">RECEIVE_ASYNC</a></li><li><a href="global.html#RECEIVE_SYNC">RECEIVE_SYNC</a></li><li><a href="global.html#SEND_ASYNC">SEND_ASYNC</a></li><li><a href="global.html#SEND_SYNC">SEND_SYNC</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.5</a> on Tue Oct 27 2026 22:50:22 GMT-0400 (Eastern Daylight Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>
